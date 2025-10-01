@@ -121,7 +121,7 @@ jobs:
 
             - name: Install uv
               id: setup-uv
-              uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
+              uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
               with:
                   enable-cache: true
                   version: 0.7.8
@@ -547,7 +547,7 @@ jobs:
             - name: Install uv
               if: ${{ needs.changes.outputs.backend == 'true' }}
               id: setup-uv-tests
-              uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
+              uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
               with:
                   enable-cache: true
                   version: 0.7.8
@@ -826,7 +826,7 @@ jobs:
 
             - name: Install uv
               id: setup-uv-async
-              uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
+              uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
               with:
                   enable-cache: true
                   version: 0.7.8
