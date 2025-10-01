@@ -642,7 +642,9 @@ impl Drop for CheckpointManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{DeduplicationStore, DeduplicationStoreConfig};
+    use crate::store::{
+        DeduplicationStore, DeduplicationStoreConfig, TimestampKey, TimestampMetadata,
+    };
     use common_types::RawEvent;
     use std::{collections::HashMap, path::PathBuf, time::Duration};
     use tempfile::TempDir;
@@ -774,8 +776,11 @@ mod tests {
 
         // Add events to the stores
         let event = create_test_event();
-        store1.handle_event_with_raw(&event).unwrap();
-        store2.handle_event_with_raw(&event).unwrap();
+        // Add test data directly to stores
+        let key = TimestampKey::from(&event);
+        let metadata = TimestampMetadata::new(&event);
+        store1.put_timestamp_record(&key, &metadata).unwrap();
+        store2.put_timestamp_record(&key, &metadata).unwrap();
 
         // add dedup stores to manager
         let stores = store_manager.stores();
@@ -839,9 +844,13 @@ mod tests {
 
         // Add an event
         let event1 = create_test_event();
-        store.handle_event_with_raw(&event1).unwrap();
+        let key1 = TimestampKey::from(&event1);
+        let metadata1 = TimestampMetadata::new(&event1);
+        store.put_timestamp_record(&key1, &metadata1).unwrap();
         let event2 = create_test_event();
-        store.handle_event_with_raw(&event2).unwrap();
+        let key2 = TimestampKey::from(&event2);
+        let metadata2 = TimestampMetadata::new(&event2);
+        store.put_timestamp_record(&key2, &metadata2).unwrap();
 
         // Create manager with short interval for testing
         let tmp_checkpoint_dir = TempDir::new().unwrap();
@@ -970,8 +979,11 @@ mod tests {
 
         // Add events to the stores
         let event = create_test_event();
-        store1.handle_event_with_raw(&event).unwrap();
-        store2.handle_event_with_raw(&event).unwrap();
+        // Add test data directly to stores
+        let key = TimestampKey::from(&event);
+        let metadata = TimestampMetadata::new(&event);
+        store1.put_timestamp_record(&key, &metadata).unwrap();
+        store2.put_timestamp_record(&key, &metadata).unwrap();
 
         // add dedup stores to manager
         let stores = store_manager.stores();
@@ -1035,8 +1047,11 @@ mod tests {
 
         // Add events to the stores
         let event = create_test_event();
-        store1.handle_event_with_raw(&event).unwrap();
-        store2.handle_event_with_raw(&event).unwrap();
+        // Add test data directly to stores
+        let key = TimestampKey::from(&event);
+        let metadata = TimestampMetadata::new(&event);
+        store1.put_timestamp_record(&key, &metadata).unwrap();
+        store2.put_timestamp_record(&key, &metadata).unwrap();
 
         // add dedup stores to manager
         let stores = store_manager.stores();
@@ -1101,7 +1116,9 @@ mod tests {
             let event = create_test_event();
             let part = Partition::new("max_inflight_checkpoints".to_string(), i);
             let store = create_test_store(part.topic(), part.partition_number());
-            store.handle_event_with_raw(&event).unwrap();
+            let key = TimestampKey::from(&event);
+            let metadata = TimestampMetadata::new(&event);
+            store.put_timestamp_record(&key, &metadata).unwrap();
             stores.insert(part, store);
         }
 
