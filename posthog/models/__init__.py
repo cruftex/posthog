@@ -19,6 +19,7 @@ from .async_deletion import AsyncDeletion, DeletionType
 from .async_migration import AsyncMigration, AsyncMigrationError, MigrationStatus
 from .batch_imports import BatchImport
 from .cohort import Cohort, CohortPeople
+from .cohort_membership import CohortMembership
 from .comment import Comment
 from .dashboard import Dashboard
 from .dashboard_templates import DashboardTemplate
@@ -116,6 +117,7 @@ __all__ = [
     "BatchImport",
     "Cohort",
     "CohortPeople",
+    "CohortMembership",
     "Dashboard",
     "DashboardTile",
     "DashboardTemplate",
