@@ -14,16 +14,18 @@ use crate::kafka::message::{AckableMessage, MessageProcessor};
 use crate::metrics::MetricsHelper;
 use crate::metrics_const::{
     DEDUPLICATION_RESULT_COUNTER, DUPLICATE_EVENTS_TOTAL_COUNTER,
-    TIMESTAMP_DEDUP_UNIQUE_UUIDS_HISTOGRAM, TIMESTAMP_DEDUP_SIMILARITY_SCORE_HISTOGRAM,
     TIMESTAMP_DEDUP_DIFFERENT_FIELDS_HISTOGRAM, TIMESTAMP_DEDUP_DIFFERENT_PROPERTIES_HISTOGRAM,
-    TIMESTAMP_DEDUP_PROPERTIES_SIMILARITY_HISTOGRAM, TIMESTAMP_DEDUP_FIELD_DIFFERENCES_COUNTER,
-    UNIQUE_EVENTS_TOTAL_COUNTER, UUID_DEDUP_TIMESTAMP_VARIANCE_HISTOGRAM,
-    UUID_DEDUP_UNIQUE_TIMESTAMPS_HISTOGRAM, UUID_DEDUP_SIMILARITY_SCORE_HISTOGRAM,
-    UUID_DEDUP_DIFFERENT_FIELDS_HISTOGRAM, UUID_DEDUP_DIFFERENT_PROPERTIES_HISTOGRAM,
-    UUID_DEDUP_PROPERTIES_SIMILARITY_HISTOGRAM, UUID_DEDUP_FIELD_DIFFERENCES_COUNTER,
+    TIMESTAMP_DEDUP_FIELD_DIFFERENCES_COUNTER, TIMESTAMP_DEDUP_PROPERTIES_SIMILARITY_HISTOGRAM,
+    TIMESTAMP_DEDUP_SIMILARITY_SCORE_HISTOGRAM, TIMESTAMP_DEDUP_UNIQUE_UUIDS_HISTOGRAM,
+    UNIQUE_EVENTS_TOTAL_COUNTER, UUID_DEDUP_DIFFERENT_FIELDS_HISTOGRAM,
+    UUID_DEDUP_DIFFERENT_PROPERTIES_HISTOGRAM, UUID_DEDUP_FIELD_DIFFERENCES_COUNTER,
+    UUID_DEDUP_PROPERTIES_SIMILARITY_HISTOGRAM, UUID_DEDUP_SIMILARITY_SCORE_HISTOGRAM,
+    UUID_DEDUP_TIMESTAMP_VARIANCE_HISTOGRAM, UUID_DEDUP_UNIQUE_TIMESTAMPS_HISTOGRAM,
 };
 use crate::rocksdb::dedup_metadata::DedupFieldName;
-use crate::store::deduplication_store::{DeduplicationResult, DeduplicationResultReason, DeduplicationType};
+use crate::store::deduplication_store::{
+    DeduplicationResult, DeduplicationResultReason, DeduplicationType,
+};
 use crate::store::keys::{TimestampKey, UuidKey};
 use crate::store::metadata::{TimestampMetadata, UuidMetadata};
 use crate::store::{DeduplicationStore, DeduplicationStoreConfig};
@@ -83,8 +85,26 @@ impl DeduplicationProcessor {
         self.store_manager.get_or_create(topic, partition).await
     }
 
+    /// Check if an event should be excluded from deduplication
+    fn is_excluded_event(event: &RawEvent) -> bool {
+        matches!(
+            event.event.as_str(),
+            "$feature_flag_called" | "$autocapture"
+        )
+    }
+
     /// Main deduplication logic - checks both timestamp and UUID patterns
-    async fn deduplicate_event(&self, raw_event: &RawEvent, store: &DeduplicationStore, metrics: &MetricsHelper) -> Result<DeduplicationResult> {
+    async fn deduplicate_event(
+        &self,
+        raw_event: &RawEvent,
+        store: &DeduplicationStore,
+        metrics: &MetricsHelper,
+    ) -> Result<DeduplicationResult> {
+        // Check if this event type should be excluded from deduplication
+        if Self::is_excluded_event(raw_event) {
+            return Ok(DeduplicationResult::Skipped);
+        }
+
         // Track timestamp-based deduplication
         let deduplication_result = self.check_timestamp_duplicate(raw_event, store, metrics)?;
 
@@ -102,7 +122,12 @@ impl DeduplicationProcessor {
     }
 
     /// Check for timestamp-based duplicates
-    fn check_timestamp_duplicate(&self, raw_event: &RawEvent, store: &DeduplicationStore, metrics: &MetricsHelper) -> Result<DeduplicationResult> {
+    fn check_timestamp_duplicate(
+        &self,
+        raw_event: &RawEvent,
+        store: &DeduplicationStore,
+        metrics: &MetricsHelper,
+    ) -> Result<DeduplicationResult> {
         let key = TimestampKey::from(raw_event);
 
         // Check if this is a duplicate
@@ -134,12 +159,45 @@ impl DeduplicationProcessor {
                 DeduplicationResult::PotentialDuplicate(DeduplicationType::Timestamp)
             };
 
+            // Format different fields for logging
+            let different_fields_str = if similarity.different_fields.is_empty() {
+                "none".to_string()
+            } else {
+                similarity
+                    .different_fields
+                    .iter()
+                    .map(|(field, orig, new)| format!("{field}({orig}->{new})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+
+            // Format different properties for logging
+            let different_properties_str = if similarity.different_properties.is_empty() {
+                "none".to_string()
+            } else {
+                similarity
+                    .different_properties
+                    .iter()
+                    .map(|(prop, values)| {
+                        if let Some((orig, new)) = values {
+                            format!("{prop}({orig}->{new})")
+                        } else {
+                            prop.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+
             // Log the duplicate
             info!(
-                "Timestamp duplicate: {} for key {:?}, Similarity: {:.2}",
+                "Timestamp {}: {} for key {:?}, Similarity: {:.2}, Different fields: [{}], Different properties: [{}]",
+                dedup_result,
                 metadata.get_metrics_summary(),
                 key,
-                similarity.overall_score
+                similarity.overall_score,
+                different_fields_str,
+                different_properties_str
             );
 
             // Emit metrics
@@ -208,7 +266,12 @@ impl DeduplicationProcessor {
     }
 
     /// Check for UUID-based duplicates
-    fn check_uuid_duplicate(&self, raw_event: &RawEvent, store: &DeduplicationStore, metrics: &MetricsHelper) -> Result<DeduplicationResult> {
+    fn check_uuid_duplicate(
+        &self,
+        raw_event: &RawEvent,
+        store: &DeduplicationStore,
+        metrics: &MetricsHelper,
+    ) -> Result<DeduplicationResult> {
         let key = UuidKey::from(raw_event);
 
         // Extract timestamp for indexing
@@ -247,11 +310,45 @@ impl DeduplicationProcessor {
                 DeduplicationResult::PotentialDuplicate(DeduplicationType::UUID)
             };
 
+            // Format different fields for logging
+            let different_fields_str = if similarity.different_fields.is_empty() {
+                "none".to_string()
+            } else {
+                similarity
+                    .different_fields
+                    .iter()
+                    .map(|(field, orig, new)| format!("{field}({orig}->{new})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+
+            // Format different properties for logging
+            let different_properties_str = if similarity.different_properties.is_empty() {
+                "none".to_string()
+            } else {
+                similarity
+                    .different_properties
+                    .iter()
+                    .map(|(prop, values)| {
+                        if let Some((orig, new)) = values {
+                            format!("{prop}({orig}->{new})")
+                        } else {
+                            prop.clone()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+
             // Log the duplicate
             info!(
-                "UUID duplicate: {} for key {:?}",
+                "UUID {}: {} for key {:?}, Similarity: {:.2}, Different fields: [{}], Different properties: [{}]",
+                dedup_result,
                 metadata.get_metrics_summary(),
-                key
+                key,
+                similarity.overall_score,
+                different_fields_str,
+                different_properties_str
             );
 
             // Emit metrics
@@ -661,6 +758,12 @@ impl DeduplicationProcessor {
                     .with_label("reason", &reason.to_string().to_lowercase())
                     .increment(1);
             }
+            DeduplicationResult::Skipped => {
+                metrics
+                    .counter(DEDUPLICATION_RESULT_COUNTER)
+                    .with_label("result_type", "skipped")
+                    .increment(1);
+            }
         }
     }
 
@@ -765,7 +868,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -779,7 +885,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = processor.check_timestamp_duplicate(&event, &store, &metrics).unwrap();
+        let result = processor
+            .check_timestamp_duplicate(&event, &store, &metrics)
+            .unwrap();
         assert_eq!(result, DeduplicationResult::New);
     }
 
@@ -789,7 +897,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -804,11 +915,15 @@ mod tests {
         };
 
         // First event should be new
-        let result1 = processor.check_timestamp_duplicate(&event, &store, &metrics).unwrap();
+        let result1 = processor
+            .check_timestamp_duplicate(&event, &store, &metrics)
+            .unwrap();
         assert_eq!(result1, DeduplicationResult::New);
 
         // Exact duplicate should be confirmed duplicate
-        let result2 = processor.check_timestamp_duplicate(&event, &store, &metrics).unwrap();
+        let result2 = processor
+            .check_timestamp_duplicate(&event, &store, &metrics)
+            .unwrap();
         assert_eq!(
             result2,
             DeduplicationResult::ConfirmedDuplicate(
@@ -824,7 +939,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -839,7 +957,9 @@ mod tests {
         };
 
         // First event should be new
-        let result1 = processor.check_timestamp_duplicate(&event1, &store, &metrics).unwrap();
+        let result1 = processor
+            .check_timestamp_duplicate(&event1, &store, &metrics)
+            .unwrap();
         assert_eq!(result1, DeduplicationResult::New);
 
         // Same event with different UUID
@@ -853,7 +973,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result2 = processor.check_timestamp_duplicate(&event2, &store, &metrics).unwrap();
+        let result2 = processor
+            .check_timestamp_duplicate(&event2, &store, &metrics)
+            .unwrap();
         assert_eq!(
             result2,
             DeduplicationResult::ConfirmedDuplicate(
@@ -869,7 +991,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -888,7 +1013,9 @@ mod tests {
         };
 
         // First event should be new
-        let result1 = processor.check_timestamp_duplicate(&event1, &store, &metrics).unwrap();
+        let result1 = processor
+            .check_timestamp_duplicate(&event1, &store, &metrics)
+            .unwrap();
         assert_eq!(result1, DeduplicationResult::New);
 
         // Similar event with different properties but same UUID
@@ -897,7 +1024,7 @@ mod tests {
         properties2.insert("prop2".to_string(), json!("extra"));
 
         let event2 = RawEvent {
-            uuid: Some(uuid),  // Same UUID as event1
+            uuid: Some(uuid), // Same UUID as event1
             event: "test_event".to_string(),
             distinct_id: Some(json!("user1")),
             token: Some("token1".to_string()),
@@ -906,8 +1033,13 @@ mod tests {
             ..Default::default()
         };
 
-        let result2 = processor.check_timestamp_duplicate(&event2, &store, &metrics).unwrap();
-        assert_eq!(result2, DeduplicationResult::PotentialDuplicate(DeduplicationType::Timestamp));
+        let result2 = processor
+            .check_timestamp_duplicate(&event2, &store, &metrics)
+            .unwrap();
+        assert_eq!(
+            result2,
+            DeduplicationResult::PotentialDuplicate(DeduplicationType::Timestamp)
+        );
     }
 
     #[tokio::test]
@@ -916,7 +1048,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -930,7 +1065,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = processor.check_uuid_duplicate(&event, &store, &metrics).unwrap();
+        let result = processor
+            .check_uuid_duplicate(&event, &store, &metrics)
+            .unwrap();
         assert_eq!(result, DeduplicationResult::New);
     }
 
@@ -940,7 +1077,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -956,7 +1096,9 @@ mod tests {
         };
 
         // First event should be new
-        let result1 = processor.check_uuid_duplicate(&event1, &store, &metrics).unwrap();
+        let result1 = processor
+            .check_uuid_duplicate(&event1, &store, &metrics)
+            .unwrap();
         assert_eq!(result1, DeduplicationResult::New);
 
         // Same event with different timestamp
@@ -970,7 +1112,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result2 = processor.check_uuid_duplicate(&event2, &store, &metrics).unwrap();
+        let result2 = processor
+            .check_uuid_duplicate(&event2, &store, &metrics)
+            .unwrap();
         assert_eq!(
             result2,
             DeduplicationResult::ConfirmedDuplicate(
@@ -986,7 +1130,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -1002,11 +1149,17 @@ mod tests {
         };
 
         // First check should return new
-        let result1 = processor.deduplicate_event(&event, &store, &metrics).await.unwrap();
+        let result1 = processor
+            .deduplicate_event(&event, &store, &metrics)
+            .await
+            .unwrap();
         assert_eq!(result1, DeduplicationResult::New);
 
         // Second check with same event should detect timestamp duplicate
-        let result2 = processor.deduplicate_event(&event, &store, &metrics).await.unwrap();
+        let result2 = processor
+            .deduplicate_event(&event, &store, &metrics)
+            .await
+            .unwrap();
         assert_eq!(
             result2,
             DeduplicationResult::ConfirmedDuplicate(
@@ -1027,7 +1180,10 @@ mod tests {
         };
 
         // Since timestamp is different, it passes timestamp check and goes to UUID check
-        let result3 = processor.deduplicate_event(&event3, &store, &metrics).await.unwrap();
+        let result3 = processor
+            .deduplicate_event(&event3, &store, &metrics)
+            .await
+            .unwrap();
         assert_eq!(
             result3,
             DeduplicationResult::ConfirmedDuplicate(
@@ -1043,7 +1199,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -1058,11 +1217,17 @@ mod tests {
         };
 
         // First event without UUID should be new
-        let result1 = processor.deduplicate_event(&event, &store, &metrics).await.unwrap();
+        let result1 = processor
+            .deduplicate_event(&event, &store, &metrics)
+            .await
+            .unwrap();
         assert_eq!(result1, DeduplicationResult::New);
 
         // Duplicate event without UUID should be detected by timestamp
-        let result2 = processor.deduplicate_event(&event, &store, &metrics).await.unwrap();
+        let result2 = processor
+            .deduplicate_event(&event, &store, &metrics)
+            .await
+            .unwrap();
         assert_eq!(
             result2,
             DeduplicationResult::ConfirmedDuplicate(
@@ -1078,7 +1243,10 @@ mod tests {
         let store_manager = Arc::new(StoreManager::new(config.store_config.clone()));
         let processor = DeduplicationProcessor::new(config, store_manager).unwrap();
 
-        let store = processor.get_or_create_store("test-topic", 0).await.unwrap();
+        let store = processor
+            .get_or_create_store("test-topic", 0)
+            .await
+            .unwrap();
         let metrics = MetricsHelper::with_partition("test-topic", 0)
             .with_label("service", "kafka-deduplicator");
 
@@ -1097,10 +1265,14 @@ mod tests {
         };
 
         // Process event twice to test metrics emission with library info
-        let result1 = processor.check_timestamp_duplicate(&event, &store, &metrics).unwrap();
+        let result1 = processor
+            .check_timestamp_duplicate(&event, &store, &metrics)
+            .unwrap();
         assert_eq!(result1, DeduplicationResult::New);
 
-        let result2 = processor.check_timestamp_duplicate(&event, &store, &metrics).unwrap();
+        let result2 = processor
+            .check_timestamp_duplicate(&event, &store, &metrics)
+            .unwrap();
         assert_eq!(
             result2,
             DeduplicationResult::ConfirmedDuplicate(

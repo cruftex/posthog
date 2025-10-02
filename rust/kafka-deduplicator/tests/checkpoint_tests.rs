@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use kafka_deduplicator::store::deduplication_store::DeduplicationResult;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +12,7 @@ use kafka_deduplicator::checkpoint::{
 use kafka_deduplicator::checkpoint_manager::CheckpointManager;
 use kafka_deduplicator::kafka::types::Partition;
 use kafka_deduplicator::store::{
-    DeduplicationStore, DeduplicationStoreConfig, TimestampKey, TimestampMetadata,
+    DeduplicationStore, DeduplicationStoreConfig, TimestampMetadata,
 };
 use kafka_deduplicator::store_manager::StoreManager;
 
@@ -280,7 +279,7 @@ async fn test_manual_checkpoint_export_incremental() {
     ];
     for event in &events {
         let key = event.into();
-        let metadata = TimestampMetadata::new(&event);
+        let metadata = TimestampMetadata::new(event);
         store.put_timestamp_record(&key, &metadata).unwrap();
     }
 
@@ -369,7 +368,7 @@ async fn test_checkpoint_manual_export_full() {
     ];
     for event in &events {
         let key = event.into();
-        let metadata = TimestampMetadata::new(&event);
+        let metadata = TimestampMetadata::new(event);
         store.put_timestamp_record(&key, &metadata).unwrap();
     }
 
@@ -451,7 +450,7 @@ async fn test_incremental_vs_full_upload_serial() {
     ];
     for event in &events {
         let key = event.into();
-        let metadata = TimestampMetadata::new(&event);
+        let metadata = TimestampMetadata::new(event);
         store.put_timestamp_record(&key, &metadata).unwrap();
     }
 
@@ -527,7 +526,7 @@ async fn test_unavailable_uploader() {
     ];
     for event in &events {
         let key = event.into();
-        let metadata = TimestampMetadata::new(&event);
+        let metadata = TimestampMetadata::new(event);
         store.put_timestamp_record(&key, &metadata).unwrap();
     }
 
@@ -583,7 +582,7 @@ async fn test_unpopulated_exporter() {
     ];
     for event in &events {
         let key = event.into();
-        let metadata = TimestampMetadata::new(&event);
+        let metadata = TimestampMetadata::new(event);
         store.put_timestamp_record(&key, &metadata).unwrap();
     }
 

@@ -44,6 +44,7 @@ pub enum DeduplicationResult {
     ConfirmedDuplicate(DeduplicationType, DeduplicationResultReason), // The reason why it's a confirmed duplicate
     PotentialDuplicate(DeduplicationType),
     New,
+    Skipped,
 }
 
 impl DeduplicationResult {
